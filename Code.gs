@@ -24,8 +24,8 @@ function getSheetId_() {
 
 const SCHEMA = {
   documents:    ['doc_id', 'filename', 'color', 'uploaded_at', 'visible'],
-  paragraphs:   ['doc_id', 'paragraph_index', 'text'],
-  comments:     ['comment_id', 'doc_id', 'paragraph_index', 'comment_text', 'author', 'created_at', 'parent_comment_id', 'resolved'],
+  paragraphs:   ['doc_id', 'paragraph_index', 'text', 'page_number', 'page_approx'],
+  comments:     ['comment_id', 'doc_id', 'paragraph_index', 'comment_text', 'author', 'created_at', 'parent_comment_id', 'resolved', 'observation'],
   tags:         ['tag_id', 'name', 'color'],
   comment_tags: ['comment_id', 'tag_id']
 };
@@ -35,11 +35,19 @@ function setup() {
   for (const [name, headers] of Object.entries(SCHEMA)) {
     let sheet = ss.getSheetByName(name);
     if (!sheet) sheet = ss.insertSheet(name);
-    const firstRow = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-    const empty = firstRow.every(v => v === '');
-    if (empty) {
+    const lastRow = sheet.getLastRow();
+    if (lastRow === 0) {
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
       sheet.setFrozenRows(1);
+    } else {
+      // Migration: append any missing columns so existing rows stay intact.
+      const existing = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      for (const h of headers) {
+        if (existing.indexOf(h) === -1) {
+          const newCol = sheet.getLastColumn() + 1;
+          sheet.getRange(1, newCol).setValue(h).setFontWeight('bold');
+        }
+      }
     }
   }
   const def = ss.getSheetByName('Sheet1') || ss.getSheetByName('Hoja 1');
@@ -60,7 +68,8 @@ function doPost(e) {
     const body = JSON.parse(raw);
     const handlers = {
       loadAll, saveDocument, deleteDocument, updateDocument,
-      saveTag, updateTag, deleteTag, setCommentTags
+      saveTag, updateTag, deleteTag, setCommentTags,
+      updateCommentObservation
     };
     const fn = handlers[body.action];
     if (!fn) throw new Error('Unknown action: ' + body.action);
@@ -68,6 +77,12 @@ function doPost(e) {
   } catch (err) {
     return jsonOut({ ok: false, error: err.message });
   }
+}
+
+function updateCommentObservation(payload) {
+  const { comment_id, observation } = payload;
+  updateRowsWhere('comments', r => String(r.comment_id) === String(comment_id), { observation: observation || '' });
+  return { updated: true };
 }
 
 function jsonOut(obj) {

@@ -17,6 +17,7 @@
     </label>
     <button class="btn" id="btn-tags">Etiquetas</button>
     <button class="btn" id="btn-export">Exportar CSV</button>
+    <button class="btn" id="btn-backup" title="Descargar JSON completo">Backup</button>
     <button class="btn" id="btn-config">Config</button>
     <button class="btn" id="btn-reload" title="Recargar desde Sheets">↻</button>
   </div>
@@ -72,6 +73,13 @@
     <div class="modal-actions">
       <button class="btn primary" id="btn-ctag-save">Aplicar</button>
     </div>
+  </div>
+</div>
+
+<div id="loader-overlay" class="loader-overlay" hidden>
+  <div class="loader-box">
+    <div class="spinner"></div>
+    <div class="loader-text">Cargando…</div>
   </div>
 </div>
 

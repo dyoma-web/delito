@@ -5,7 +5,7 @@ let nextDefaultColor = 0;
 const state = {
   documents: [], paragraphs: [], comments: [], tags: [], comment_tags: [],
   filters: { text: '', author: '', tagId: '', showResolved: false },
-  contextExpansion: {}, // key: `${doc_id}:${paragraph_index}` -> { before: int, after: int }
+  contextExpansion: {},
   pendingCtagCommentId: null
 };
 
@@ -16,12 +16,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function reloadAll() {
+  showLoading('Cargando datos…');
   try {
     const data = await API.loadAll();
     Object.assign(state, data);
     render();
   } catch (e) {
     toast('Error cargando datos: ' + e.message, true);
+  } finally {
+    hideLoading();
   }
 }
 
@@ -31,6 +34,7 @@ function wireEvents() {
   document.getElementById('btn-tags').addEventListener('click', openTagModal);
   document.getElementById('btn-config').addEventListener('click', openConfigModal);
   document.getElementById('btn-export').addEventListener('click', exportCSV);
+  document.getElementById('btn-backup').addEventListener('click', exportBackup);
   document.getElementById('btn-reload').addEventListener('click', reloadAll);
 
   document.getElementById('filter-text').addEventListener('input', e => { state.filters.text = e.target.value.toLowerCase(); renderDocs(); });
@@ -50,19 +54,40 @@ function wireEvents() {
   }));
 }
 
+// ---------- Loader ----------
+function showLoading(msg) {
+  const el = document.getElementById('loader-overlay');
+  if (!el) return;
+  el.querySelector('.loader-text').textContent = msg || 'Cargando…';
+  el.hidden = false;
+}
+function hideLoading() {
+  const el = document.getElementById('loader-overlay');
+  if (el) el.hidden = true;
+}
+function setLoaderText(msg) {
+  const el = document.getElementById('loader-overlay');
+  if (el && !el.hidden) el.querySelector('.loader-text').textContent = msg;
+}
+
 // ---------- File upload ----------
 async function onFileUpload(e) {
   const files = Array.from(e.target.files);
   e.target.value = '';
-  for (const f of files) {
-    try { await handleFile(f); }
-    catch (err) { toast(`Error con ${f.name}: ${err.message}`, true); }
+  showLoading('Procesando archivo…');
+  try {
+    for (const f of files) {
+      try { await handleFile(f); }
+      catch (err) { toast(`Error con ${f.name}: ${err.message}`, true); }
+    }
+    render();
+  } finally {
+    hideLoading();
   }
-  render();
 }
 
 async function handleFile(file) {
-  toast(`Procesando ${file.name}...`);
+  setLoaderText(`Parseando ${file.name}…`);
   const parsed = await parseDocx(file);
   const existing = state.documents.find(d => d.doc_id === parsed.docId);
 
@@ -73,7 +98,7 @@ async function handleFile(file) {
       `¿Reemplazar con esta versión? (Cancelar = duplicar como copia nueva)`
     );
     if (choice) {
-      // Replace: keep same doc_id, overwrite.
+      // keep same doc_id, overwrite
     } else {
       docId = parsed.docId + '_' + Date.now();
     }
@@ -91,7 +116,11 @@ async function handleFile(file) {
     visible: true
   };
   const paragraphs = parsed.paragraphs.map(p => ({
-    doc_id: docId, paragraph_index: p.paragraph_index, text: p.text
+    doc_id: docId,
+    paragraph_index: p.paragraph_index,
+    text: p.text,
+    page_number: p.page_number,
+    page_approx: p.page_approx
   }));
   const comments = parsed.comments.map(c => ({
     comment_id: `${docId}_${c.id}`,
@@ -101,12 +130,13 @@ async function handleFile(file) {
     author: c.author,
     created_at: c.date,
     parent_comment_id: c.parentId ? `${docId}_${c.parentId}` : '',
-    resolved: c.resolved ? 1 : 0
+    resolved: c.resolved ? 1 : 0,
+    observation: ''
   }));
 
+  setLoaderText(`Guardando ${comments.length} comentarios…`);
   await API.post('saveDocument', { document: doc, paragraphs, comments });
 
-  // Mutate local state (remove old, add new).
   state.documents   = state.documents.filter(d => d.doc_id !== docId).concat([doc]);
   state.paragraphs  = state.paragraphs.filter(p => p.doc_id !== docId).concat(paragraphs);
   state.comments    = state.comments.filter(c => c.doc_id !== docId).concat(comments);
@@ -158,7 +188,9 @@ function isVisible(d) {
 async function toggleDocVisibility(d) {
   const newVal = !isVisible(d);
   d.visible = newVal;
-  await API.post('updateDocument', { doc_id: d.doc_id, patch: { visible: newVal } });
+  try {
+    await API.post('updateDocument', { doc_id: d.doc_id, patch: { visible: newVal } });
+  } catch (e) { toast('Error: ' + e.message, true); }
   render();
 }
 
@@ -192,7 +224,8 @@ function renderDoc(d) {
   header.querySelector('input[type=color]').addEventListener('input', async e => {
     d.color = e.target.value;
     card.style.background = d.color;
-    await API.post('updateDocument', { doc_id: d.doc_id, patch: { color: d.color } });
+    try { await API.post('updateDocument', { doc_id: d.doc_id, patch: { color: d.color } }); }
+    catch (er) { toast('Error: ' + er.message, true); }
     renderDocToggles();
   });
   header.querySelector('[data-act=hide]').addEventListener('click', () => toggleDocVisibility(d));
@@ -212,7 +245,7 @@ function renderDocTable(d) {
     .sort((a, b) => Number(a.paragraph_index) - Number(b.paragraph_index));
 
   const paraMap = {};
-  paragraphs.forEach(p => { paraMap[Number(p.paragraph_index)] = p.text; });
+  paragraphs.forEach(p => { paraMap[Number(p.paragraph_index)] = p; });
 
   const docComments = state.comments.filter(c => c.doc_id === d.doc_id);
   const topLevel    = docComments.filter(c => !c.parent_comment_id);
@@ -223,7 +256,6 @@ function renderDocTable(d) {
     }
   }
 
-  // Filter and group by paragraph_index.
   const filtered = topLevel.filter(c => matchesFilters(c, repliesByParent[c.comment_id] || []));
   const byPara = {};
   for (const c of filtered) {
@@ -234,89 +266,124 @@ function renderDocTable(d) {
 
   const table = document.createElement('table');
   table.className = 'doc-table';
-  table.innerHTML = `<thead><tr><th>Párrafo</th><th>Comentario</th></tr></thead>`;
+  table.innerHTML = `<thead><tr>
+    <th class="col-page">Pg</th>
+    <th class="col-para">Párrafo</th>
+    <th class="col-comment">Comentario</th>
+    <th class="col-obs">Observación</th>
+  </tr></thead>`;
   const tbody = document.createElement('tbody');
 
   if (paraIndexes.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="2" style="text-align:center;color:#64748b;padding:24px">
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:#64748b;padding:24px">
       ${docComments.length ? 'Sin resultados con los filtros actuales.' : 'Este documento no tiene comentarios.'}
     </td></tr>`;
   }
 
   for (const idx of paraIndexes) {
     const comments = byPara[idx];
-    const mainText = paraMap[idx] || '(párrafo no encontrado)';
-    const expKey = `${d.doc_id}:${idx}`;
-    const exp = state.contextExpansion[expKey] || { before: 0, after: 0 };
+    const p = paraMap[idx];
+    const pageNum = p ? p.page_number : '';
+    const approx  = p && (Number(p.page_approx) === 1 || p.page_approx === 'TRUE' || p.page_approx === true);
+    const rowSpan = comments.length;
 
-    const tr = document.createElement('tr');
-    const tdP = document.createElement('td');
-    tdP.className = 'paragraph';
+    comments.forEach((c, ci) => {
+      const tr = document.createElement('tr');
 
-    // Before-context paragraphs
-    for (let i = exp.before; i > 0; i--) {
-      const t = paraMap[idx - i];
-      if (t !== undefined) {
-        const div = document.createElement('div');
-        div.className = 'context-paragraph';
-        div.textContent = t;
-        tdP.appendChild(div);
+      if (ci === 0) {
+        const tdPage = document.createElement('td');
+        tdPage.className = 'col-page cell-page';
+        tdPage.rowSpan = rowSpan;
+        tdPage.appendChild(renderPageBadge(pageNum, approx));
+        tr.appendChild(tdPage);
+
+        const tdP = document.createElement('td');
+        tdP.className = 'col-para cell-paragraph';
+        tdP.rowSpan = rowSpan;
+        tdP.appendChild(renderParagraphCell(d, idx, paraMap));
+        tr.appendChild(tdP);
       }
-    }
-    const main = document.createElement('div');
-    main.textContent = mainText;
-    tdP.appendChild(main);
-    for (let i = 1; i <= exp.after; i++) {
-      const t = paraMap[idx + i];
-      if (t !== undefined) {
-        const div = document.createElement('div');
-        div.className = 'context-paragraph';
-        div.textContent = t;
-        tdP.appendChild(div);
-      }
-    }
 
-    const btns = document.createElement('div');
-    btns.className = 'expand-btns';
-    btns.innerHTML = `
-      <button data-act="exp-bef--">− antes</button>
-      <button data-act="exp-bef++">+ antes</button>
-      <button data-act="exp-aft--">− después</button>
-      <button data-act="exp-aft++">+ después</button>
-    `;
-    btns.addEventListener('click', (e) => {
-      const act = e.target.dataset.act;
-      if (!act) return;
-      const cur = { ...(state.contextExpansion[expKey] || { before: 0, after: 0 }) };
-      if (act === 'exp-bef++') cur.before = Math.min(cur.before + 1, idx);
-      if (act === 'exp-bef--') cur.before = Math.max(0, cur.before - 1);
-      if (act === 'exp-aft++') cur.after  = cur.after + 1;
-      if (act === 'exp-aft--') cur.after  = Math.max(0, cur.after - 1);
-      state.contextExpansion[expKey] = cur;
-      renderDocs();
+      const tdC = document.createElement('td');
+      tdC.className = 'col-comment cell-comment';
+      tdC.appendChild(renderCommentNode(c, repliesByParent[c.comment_id] || [], comments.length > 1, ci + 1, comments.length));
+      tr.appendChild(tdC);
+
+      const tdO = document.createElement('td');
+      tdO.className = 'col-obs cell-observation';
+      tdO.appendChild(renderObservation(c));
+      tr.appendChild(tdO);
+
+      tbody.appendChild(tr);
     });
-    tdP.appendChild(btns);
-
-    const tdC = document.createElement('td');
-    tdC.className = 'comment';
-    comments.forEach((c, i) => {
-      const wrapper = document.createElement('div');
-      if (i > 0) {
-        wrapper.style.borderTop = '1px dashed rgba(0,0,0,.15)';
-        wrapper.style.paddingTop = '8px';
-        wrapper.style.marginTop = '8px';
-      }
-      wrapper.appendChild(renderCommentNode(c, repliesByParent[c.comment_id] || [], comments.length > 1, i + 1, comments.length));
-      tdC.appendChild(wrapper);
-    });
-
-    tr.appendChild(tdP);
-    tr.appendChild(tdC);
-    tbody.appendChild(tr);
   }
 
   table.appendChild(tbody);
   return table;
+}
+
+function renderPageBadge(pg, approx) {
+  const span = document.createElement('span');
+  span.className = 'page-badge' + (approx ? ' page-approx' : '');
+  span.textContent = pg === '' || pg === undefined || pg === null
+    ? '—'
+    : (approx ? `~${pg}` : String(pg));
+  span.title = approx
+    ? 'Página estimada (el documento no trae marcas de paginado de Word)'
+    : 'Página';
+  return span;
+}
+
+function renderParagraphCell(d, idx, paraMap) {
+  const wrap = document.createElement('div');
+  const expKey = `${d.doc_id}:${idx}`;
+  const exp = state.contextExpansion[expKey] || { before: 0, after: 0 };
+  const mainObj = paraMap[idx];
+  const mainText = mainObj ? mainObj.text : '(párrafo no encontrado)';
+
+  for (let i = exp.before; i > 0; i--) {
+    const t = paraMap[idx - i];
+    if (t) {
+      const div = document.createElement('div');
+      div.className = 'context-paragraph';
+      div.textContent = t.text;
+      wrap.appendChild(div);
+    }
+  }
+  const main = document.createElement('div');
+  main.textContent = mainText;
+  wrap.appendChild(main);
+  for (let i = 1; i <= exp.after; i++) {
+    const t = paraMap[idx + i];
+    if (t) {
+      const div = document.createElement('div');
+      div.className = 'context-paragraph';
+      div.textContent = t.text;
+      wrap.appendChild(div);
+    }
+  }
+
+  const btns = document.createElement('div');
+  btns.className = 'expand-btns';
+  btns.innerHTML = `
+    <button data-act="exp-bef--">− antes</button>
+    <button data-act="exp-bef++">+ antes</button>
+    <button data-act="exp-aft--">− después</button>
+    <button data-act="exp-aft++">+ después</button>
+  `;
+  btns.addEventListener('click', (e) => {
+    const act = e.target.dataset.act;
+    if (!act) return;
+    const cur = { ...(state.contextExpansion[expKey] || { before: 0, after: 0 }) };
+    if (act === 'exp-bef++') cur.before = Math.min(cur.before + 1, idx);
+    if (act === 'exp-bef--') cur.before = Math.max(0, cur.before - 1);
+    if (act === 'exp-aft++') cur.after  = cur.after + 1;
+    if (act === 'exp-aft--') cur.after  = Math.max(0, cur.after - 1);
+    state.contextExpansion[expKey] = cur;
+    renderDocs();
+  });
+  wrap.appendChild(btns);
+  return wrap;
 }
 
 function renderCommentNode(c, replies, isMulti, n, total) {
@@ -339,7 +406,6 @@ function renderCommentNode(c, replies, isMulti, n, total) {
   text.textContent = c.comment_text || '';
   node.appendChild(text);
 
-  // Replies (threaded)
   for (const r of replies.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))) {
     const rep = document.createElement('div');
     rep.className = 'comment-reply';
@@ -374,6 +440,51 @@ function renderCommentNode(c, replies, isMulti, n, total) {
   return node;
 }
 
+function renderObservation(c) {
+  const wrap = document.createElement('div');
+  wrap.className = 'obs-wrap';
+
+  const ta = document.createElement('textarea');
+  ta.className = 'obs-input';
+  ta.placeholder = 'Añadir observación…';
+  ta.maxLength = 2000;
+  ta.value = c.observation || '';
+  ta.rows = 3;
+
+  const del = document.createElement('button');
+  del.className = 'btn small danger obs-del';
+  del.textContent = 'Eliminar';
+  del.style.display = (c.observation && String(c.observation).length > 0) ? 'inline-block' : 'none';
+
+  let savedValue = ta.value;
+  const save = async (newVal) => {
+    const v = newVal !== undefined ? newVal : ta.value;
+    if (v === savedValue) return;
+    savedValue = v;
+    c.observation = v;
+    try {
+      await API.post('updateCommentObservation', { comment_id: c.comment_id, observation: v });
+    } catch (e) {
+      toast('Error guardando observación: ' + e.message, true);
+    }
+  };
+  ta.addEventListener('blur', () => save());
+  ta.addEventListener('input', () => {
+    del.style.display = ta.value ? 'inline-block' : 'none';
+  });
+  wrap.appendChild(ta);
+
+  del.addEventListener('click', async () => {
+    if (!confirm('¿Eliminar la observación? Esta acción no se puede deshacer.')) return;
+    ta.value = '';
+    del.style.display = 'none';
+    await save('');
+  });
+  wrap.appendChild(del);
+
+  return wrap;
+}
+
 // ---------- Filters ----------
 function matchesFilters(c, replies) {
   const f = state.filters;
@@ -388,7 +499,7 @@ function matchesFilters(c, replies) {
 
   if (f.text) {
     const hay = [
-      c.comment_text, c.author,
+      c.comment_text, c.author, c.observation,
       ...replies.map(r => r.comment_text), ...replies.map(r => r.author),
       getParagraphText(c.doc_id, c.paragraph_index)
     ].join(' ').toLowerCase();
@@ -415,14 +526,21 @@ function tagsOfComment(cid) {
 // ---------- Delete doc ----------
 async function deleteDoc(d) {
   if (!confirm(`¿Eliminar "${d.filename}" y todos sus comentarios?`)) return;
-  await API.post('deleteDocument', { doc_id: d.doc_id });
-  const cids = state.comments.filter(c => c.doc_id === d.doc_id).map(c => String(c.comment_id));
-  state.comment_tags = state.comment_tags.filter(r => !cids.includes(String(r.comment_id)));
-  state.comments     = state.comments.filter(c => c.doc_id !== d.doc_id);
-  state.paragraphs   = state.paragraphs.filter(p => p.doc_id !== d.doc_id);
-  state.documents    = state.documents.filter(x => x.doc_id !== d.doc_id);
-  render();
-  toast('Documento eliminado.');
+  showLoading('Eliminando documento…');
+  try {
+    await API.post('deleteDocument', { doc_id: d.doc_id });
+    const cids = state.comments.filter(c => c.doc_id === d.doc_id).map(c => String(c.comment_id));
+    state.comment_tags = state.comment_tags.filter(r => !cids.includes(String(r.comment_id)));
+    state.comments     = state.comments.filter(c => c.doc_id !== d.doc_id);
+    state.paragraphs   = state.paragraphs.filter(p => p.doc_id !== d.doc_id);
+    state.documents    = state.documents.filter(x => x.doc_id !== d.doc_id);
+    render();
+    toast('Documento eliminado.');
+  } catch (e) {
+    toast('Error eliminando: ' + e.message, true);
+  } finally {
+    hideLoading();
+  }
 }
 
 // ---------- Tag manager ----------
@@ -446,17 +564,25 @@ function renderTagList() {
       const name  = li.querySelector('.tag-name').value.trim();
       const color = li.querySelector('input[type=color]').value;
       if (!name) return;
-      await API.post('updateTag', { tag_id: t.tag_id, patch: { name, color } });
-      t.name = name; t.color = color;
-      renderTagList(); render();
-      toast('Etiqueta actualizada.');
+      showLoading('Guardando etiqueta…');
+      try {
+        await API.post('updateTag', { tag_id: t.tag_id, patch: { name, color } });
+        t.name = name; t.color = color;
+        renderTagList(); render();
+        toast('Etiqueta actualizada.');
+      } catch (e) { toast('Error: ' + e.message, true); }
+      finally { hideLoading(); }
     });
     li.querySelector('[data-act=del]').addEventListener('click', async () => {
       if (!confirm(`¿Eliminar la etiqueta "${t.name}"?`)) return;
-      await API.post('deleteTag', { tag_id: t.tag_id });
-      state.tags = state.tags.filter(x => x.tag_id !== t.tag_id);
-      state.comment_tags = state.comment_tags.filter(r => String(r.tag_id) !== String(t.tag_id));
-      renderTagList(); render();
+      showLoading('Eliminando etiqueta…');
+      try {
+        await API.post('deleteTag', { tag_id: t.tag_id });
+        state.tags = state.tags.filter(x => x.tag_id !== t.tag_id);
+        state.comment_tags = state.comment_tags.filter(r => String(r.tag_id) !== String(t.tag_id));
+        renderTagList(); render();
+      } catch (e) { toast('Error: ' + e.message, true); }
+      finally { hideLoading(); }
     });
     ul.appendChild(li);
   }
@@ -467,10 +593,14 @@ async function onTagAdd() {
   if (!name) { toast('Pon un nombre a la etiqueta.', true); return; }
   const tag_id = 'tag_' + Date.now();
   const tag = { tag_id, name, color };
-  await API.post('saveTag', tag);
-  state.tags.push(tag);
-  document.getElementById('tag-name').value = '';
-  renderTagList(); render();
+  showLoading('Guardando etiqueta…');
+  try {
+    await API.post('saveTag', tag);
+    state.tags.push(tag);
+    document.getElementById('tag-name').value = '';
+    renderTagList(); render();
+  } catch (e) { toast('Error: ' + e.message, true); }
+  finally { hideLoading(); }
 }
 
 // ---------- Comment tag picker ----------
@@ -500,11 +630,15 @@ async function onCtagSave() {
   const cid = state.pendingCtagCommentId;
   const ids = Array.from(document.querySelectorAll('#ctag-list input[type=checkbox]:checked'))
     .map(el => el.value);
-  await API.post('setCommentTags', { comment_id: cid, tag_ids: ids });
-  state.comment_tags = state.comment_tags.filter(r => String(r.comment_id) !== String(cid));
-  state.comment_tags.push(...ids.map(tid => ({ comment_id: cid, tag_id: tid })));
-  document.getElementById('ctag-modal').hidden = true;
-  render();
+  showLoading('Guardando etiquetas…');
+  try {
+    await API.post('setCommentTags', { comment_id: cid, tag_ids: ids });
+    state.comment_tags = state.comment_tags.filter(r => String(r.comment_id) !== String(cid));
+    state.comment_tags.push(...ids.map(tid => ({ comment_id: cid, tag_id: tid })));
+    document.getElementById('ctag-modal').hidden = true;
+    render();
+  } catch (e) { toast('Error: ' + e.message, true); }
+  finally { hideLoading(); }
 }
 
 // ---------- Config ----------
@@ -516,26 +650,36 @@ async function onConfigSave() {
   const url = document.getElementById('cfg-api-url').value.trim();
   API.setUrl(url);
   document.getElementById('config-modal').hidden = true;
-  toast('Config guardada. Recargando...');
+  toast('Config guardada. Recargando…');
   await reloadAll();
 }
 
 // ---------- Export CSV ----------
 function exportCSV() {
-  const rows = [['documento', 'parrafo_idx', 'parrafo_texto', 'comentario', 'autor', 'fecha', 'resuelto', 'etiquetas', 'es_respuesta_a']];
+  const rows = [[
+    'documento', 'pagina', 'pagina_aproximada', 'parrafo_idx', 'parrafo_texto',
+    'comentario', 'autor', 'fecha', 'resuelto',
+    'etiquetas', 'es_respuesta_a', 'observacion'
+  ]];
   for (const c of state.comments) {
     const doc = state.documents.find(d => d.doc_id === c.doc_id);
     const tags = tagsOfComment(c.comment_id).map(t => t.name).join('; ');
+    const p = state.paragraphs.find(pp =>
+      pp.doc_id === c.doc_id && Number(pp.paragraph_index) === Number(c.paragraph_index));
+    const approx = p && (Number(p.page_approx) === 1 || p.page_approx === 'TRUE' || p.page_approx === true);
     rows.push([
       doc ? doc.filename : c.doc_id,
+      p ? p.page_number : '',
+      approx ? 'sí' : 'no',
       c.paragraph_index,
-      getParagraphText(c.doc_id, c.paragraph_index),
+      p ? p.text : '',
       c.comment_text,
       c.author,
       c.created_at,
       Number(c.resolved) === 1 ? 'sí' : 'no',
       tags,
-      c.parent_comment_id || ''
+      c.parent_comment_id || '',
+      c.observation || ''
     ]);
   }
   const csv = rows.map(r => r.map(csvCell).join(',')).join('\n');
@@ -548,6 +692,26 @@ function exportCSV() {
 function csvCell(v) {
   const s = String(v ?? '');
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// ---------- Backup JSON ----------
+async function exportBackup() {
+  showLoading('Descargando backup…');
+  try {
+    const data = await API.loadAll();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `backup_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Backup descargado.');
+  } catch (e) {
+    toast('Error descargando backup: ' + e.message, true);
+  } finally {
+    hideLoading();
+  }
 }
 
 // ---------- Utilities ----------

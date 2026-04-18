@@ -4,13 +4,14 @@ const W  = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const W14 = 'http://schemas.microsoft.com/office/word/2010/wordml';
 const W15 = 'http://schemas.microsoft.com/office/word/2012/wordml';
 
+const CHARS_PER_PAGE_FALLBACK = 3500;
+
 async function sha256Hex(buf) {
   const hash = await crypto.subtle.digest('SHA-256', buf);
   return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 function textOfCommentEl(el) {
-  // Preserve paragraph breaks in the comment body.
   const paragraphs = Array.from(el.getElementsByTagNameNS(W, 'p'));
   if (paragraphs.length === 0) {
     return Array.from(el.getElementsByTagNameNS(W, 't')).map(t => t.textContent).join('');
@@ -21,7 +22,6 @@ function textOfCommentEl(el) {
 }
 
 function paragraphTextWithBreaks(p) {
-  // Walk runs in order, concatenating text and line breaks.
   let text = '';
   const walk = (node) => {
     if (node.nodeType !== 1) return;
@@ -33,6 +33,24 @@ function paragraphTextWithBreaks(p) {
   };
   walk(p);
   return text.trim();
+}
+
+// Returns starting page number from the last sectPr (1 if absent).
+function getStartPage(docDoc) {
+  const sectPrs = docDoc.getElementsByTagNameNS(W, 'sectPr');
+  for (const sp of sectPrs) {
+    const pgNumType = sp.getElementsByTagNameNS(W, 'pgNumType')[0];
+    if (pgNumType) {
+      const start = pgNumType.getAttributeNS(W, 'start');
+      if (start) return parseInt(start, 10) || 1;
+    }
+  }
+  return 1;
+}
+
+// True if the doc contains Word-generated page-break hints.
+function docHasPageHints(docDoc) {
+  return docDoc.getElementsByTagNameNS(W, 'lastRenderedPageBreak').length > 0;
 }
 
 async function parseDocx(file) {
@@ -49,7 +67,7 @@ async function parseDocx(file) {
   const parser = new DOMParser();
   const docDoc = parser.parseFromString(docXml, 'application/xml');
 
-  // --- Parse all comments (text, author, date, paraId) ---
+  // ----- Parse comments text/author/date -----
   const commentsById = {};
   const commentByParaId = {};
   if (commentsFile) {
@@ -61,7 +79,6 @@ async function parseDocx(file) {
       const author = el.getAttributeNS(W, 'author') || 'Desconocido';
       const date = el.getAttributeNS(W, 'date') || '';
       const text = textOfCommentEl(el);
-      // paraId is on the first w:p of the comment body (in w14 namespace).
       const firstP = el.getElementsByTagNameNS(W, 'p')[0];
       const paraId = firstP ? firstP.getAttributeNS(W14, 'paraId') : null;
       const c = { id, author, date, text, paraId, parentId: null, resolved: false };
@@ -70,7 +87,6 @@ async function parseDocx(file) {
     }
   }
 
-  // --- Extended: parent (replies) + resolved ---
   if (commentsExtFile) {
     const extXml = await commentsExtFile.async('string');
     const eDoc = parser.parseFromString(extXml, 'application/xml');
@@ -88,49 +104,84 @@ async function parseDocx(file) {
     }
   }
 
-  // --- Walk document body paragraphs ---
+  // ----- Walk body paragraphs, compute page numbers and anchor comments -----
   const body = docDoc.getElementsByTagNameNS(W, 'body')[0];
   if (!body) throw new Error('body no encontrado');
 
+  const startPage = getStartPage(docDoc);
+  const hasHints = docHasPageHints(docDoc);
+
   const paragraphs = [];
-  const commentToParaIndex = {}; // commentId -> first paragraph index where it starts
+  const commentToParaIndex = {};
 
-  const openComments = new Set(); // comments whose Range started but hasn't ended yet (spanning multiple paragraphs)
   let paraIdx = 0;
+  let currentPage = startPage;   // page where the NEXT paragraph starts
+  let charCount = 0;             // for fallback estimation
 
+  // processParagraph anchors the paragraph to its starting page and walks in
+  // document order so that any lastRenderedPageBreak encountered MID-paragraph
+  // increments currentPage for subsequent paragraphs (and for later comments
+  // in this paragraph).
   const processParagraph = (p) => {
     const idx = paraIdx++;
     const text = paragraphTextWithBreaks(p);
-    paragraphs.push({ paragraph_index: idx, text });
 
-    // Find commentRangeStart elements inside this paragraph (in order).
-    const starts = p.getElementsByTagNameNS(W, 'commentRangeStart');
-    for (const s of starts) {
-      const cid = s.getAttributeNS(W, 'id');
-      if (commentToParaIndex[cid] === undefined) commentToParaIndex[cid] = idx;
-      openComments.add(cid);
+    // pageBreakBefore: this paragraph starts on a fresh page.
+    const pPr = p.getElementsByTagNameNS(W, 'pPr')[0];
+    if (pPr && pPr.getElementsByTagNameNS(W, 'pageBreakBefore').length > 0) {
+      currentPage++;
     }
-    const ends = p.getElementsByTagNameNS(W, 'commentRangeEnd');
-    for (const e of ends) openComments.delete(e.getAttributeNS(W, 'id'));
 
-    // If no commentRangeStart in this paragraph but a comment is "open" from earlier,
-    // the paragraph is still part of that comment's span — but we don't re-anchor.
+    const paragraphPage = currentPage;
+    const approx = !hasHints;
+
+    // Walk paragraph descendants in order; react to page breaks and
+    // commentRangeStart to anchor comment IDs.
+    const walk = (node) => {
+      for (const child of node.childNodes) {
+        if (child.nodeType !== 1) continue;
+        const ln = child.localName;
+        const ns = child.namespaceURI;
+        if (ns === W) {
+          if (ln === 'lastRenderedPageBreak') { currentPage++; continue; }
+          if (ln === 'br' && child.getAttributeNS(W, 'type') === 'page') { currentPage++; continue; }
+          if (ln === 'commentRangeStart') {
+            const cid = child.getAttributeNS(W, 'id');
+            if (commentToParaIndex[cid] === undefined) commentToParaIndex[cid] = idx;
+            continue;
+          }
+        }
+        walk(child);
+      }
+    };
+    walk(p);
+
+    // Fallback page estimation if no hints anywhere in the doc.
+    let pageNumber = paragraphPage;
+    if (!hasHints) {
+      pageNumber = startPage + Math.floor(charCount / CHARS_PER_PAGE_FALLBACK);
+      charCount += text.length + 1;
+    }
+
+    paragraphs.push({
+      paragraph_index: idx,
+      text,
+      page_number: pageNumber,
+      page_approx: approx ? 1 : 0
+    });
   };
 
-  // Iterate only direct children of body that are paragraphs or tables (skip sectPr).
   for (const child of body.childNodes) {
     if (child.nodeType !== 1) continue;
     const ln = child.localName;
     if (ln === 'p') {
       processParagraph(child);
     } else if (ln === 'tbl') {
-      // Include paragraphs inside table cells so we don't lose commented text in tables.
       const innerPs = child.getElementsByTagNameNS(W, 'p');
       for (const p of innerPs) processParagraph(p);
     }
   }
 
-  // Build output comments with paragraph_index.
   const comments = Object.values(commentsById)
     .filter(c => commentToParaIndex[c.id] !== undefined)
     .map(c => ({

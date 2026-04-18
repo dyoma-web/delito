@@ -19,12 +19,10 @@ const API = (() => {
   async function post(action, payload) {
     const url = getUrl();
     if (!url) return localHandler(action, payload);
-    const res = await fetch(url, {
-      method: 'POST',
-      // text/plain avoids CORS preflight with Apps Script
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action, payload })
-    });
+    // FormData avoids CORS preflight across all browsers (Firefox/Chrome/Safari).
+    const fd = new FormData();
+    fd.append('payload', JSON.stringify({ action, payload }));
+    const res = await fetch(url, { method: 'POST', body: fd });
     const json = await res.json();
     if (!json.ok) throw new Error(json.error || 'Error en la API');
     return json.data;

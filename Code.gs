@@ -53,7 +53,11 @@ function doGet(e) {
 
 function doPost(e) {
   try {
-    const body = JSON.parse(e.postData.contents);
+    // Prefer FormData payload (e.parameter.payload); fall back to raw body.
+    const raw = (e.parameter && e.parameter.payload)
+      ? e.parameter.payload
+      : (e.postData ? e.postData.contents : '{}');
+    const body = JSON.parse(raw);
     const handlers = {
       loadAll, saveDocument, deleteDocument, updateDocument,
       saveTag, updateTag, deleteTag, setCommentTags

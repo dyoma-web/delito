@@ -1,0 +1,23 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Logs
+*.log
+
+# Environment / secrets
+.env
+.env.local
+.claspignore
+.clasp.json
+
+# Node (por si más adelante agregamos build)
+node_modules/
+dist/

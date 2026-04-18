@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Visor de Comentarios DOCX</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <h1>Visor de Comentarios DOCX</h1>
+  <div class="actions">
+    <label class="btn primary">
+      <input type="file" id="file-input" accept=".docx" multiple hidden>
+      + Subir .docx
+    </label>
+    <button class="btn" id="btn-tags">Etiquetas</button>
+    <button class="btn" id="btn-export">Exportar CSV</button>
+    <button class="btn" id="btn-config">Config</button>
+    <button class="btn" id="btn-reload" title="Recargar desde Sheets">↻</button>
+  </div>
+</header>
+
+<section class="filters">
+  <input type="search" id="filter-text" placeholder="Buscar texto...">
+  <select id="filter-author"><option value="">Todos los autores</option></select>
+  <select id="filter-tag"><option value="">Todas las etiquetas</option></select>
+  <label><input type="checkbox" id="filter-resolved"> Mostrar resueltos</label>
+  <span class="sep"></span>
+  <div id="doc-toggles" class="doc-toggles"></div>
+</section>
+
+<main id="docs-container" class="docs-container">
+  <div class="empty-state" id="empty-state">
+    <p>No hay documentos cargados.</p>
+    <p>Sube un <code>.docx</code> con comentarios para empezar.</p>
+  </div>
+</main>
+
+<!-- Tag manager modal -->
+<div class="modal" id="tag-modal" hidden>
+  <div class="modal-content">
+    <header><h2>Gestión de Etiquetas</h2><button class="close" data-close>×</button></header>
+    <div class="tag-form">
+      <input type="text" id="tag-name" placeholder="Nombre de etiqueta">
+      <input type="color" id="tag-color" value="#4CAF50">
+      <button class="btn primary" id="btn-tag-add">Agregar</button>
+    </div>
+    <ul id="tag-list" class="tag-list"></ul>
+  </div>
+</div>
+
+<!-- Config modal -->
+<div class="modal" id="config-modal" hidden>
+  <div class="modal-content">
+    <header><h2>Configuración</h2><button class="close" data-close>×</button></header>
+    <label>URL del Web App de Apps Script:</label>
+    <input type="url" id="cfg-api-url" placeholder="https://script.google.com/macros/s/.../exec">
+    <p class="hint">Si está vacío, los datos se guardan solo en este navegador (localStorage).</p>
+    <div class="modal-actions">
+      <button class="btn primary" id="btn-cfg-save">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Comment-tag picker modal -->
+<div class="modal" id="ctag-modal" hidden>
+  <div class="modal-content">
+    <header><h2>Etiquetas del comentario</h2><button class="close" data-close>×</button></header>
+    <ul id="ctag-list" class="tag-list"></ul>
+    <div class="modal-actions">
+      <button class="btn primary" id="btn-ctag-save">Aplicar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="docx-parser.js"></script>
+<script src="api.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

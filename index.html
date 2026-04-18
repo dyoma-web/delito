@@ -18,6 +18,8 @@
     <button class="btn" id="btn-tags">Etiquetas</button>
     <button class="btn" id="btn-export">Exportar CSV</button>
     <button class="btn" id="btn-backup" title="Descargar JSON completo">Backup</button>
+    <button class="btn" id="btn-share">Compartir / PDF</button>
+    <button class="btn" id="btn-pdf-view" title="Generar PDF con la vista actual">Imprimir PDF</button>
     <button class="btn" id="btn-config">Config</button>
     <button class="btn" id="btn-reload" title="Recargar desde Sheets">↻</button>
   </div>
@@ -72,6 +74,41 @@
     <ul id="ctag-list" class="tag-list"></ul>
     <div class="modal-actions">
       <button class="btn primary" id="btn-ctag-save">Aplicar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Share / PDF modal -->
+<div class="modal" id="share-modal" hidden>
+  <div class="modal-content">
+    <header><h2>Compartir vista / Generar PDF</h2><button class="close" data-close>×</button></header>
+    <div class="share-section">
+      <label class="section-label">Documentos a incluir</label>
+      <ul id="share-docs" class="share-docs"></ul>
+    </div>
+    <div class="share-section">
+      <label class="section-label">Ocultar en la vista compartida</label>
+      <div class="share-opts">
+        <label><input type="checkbox" data-hide="authors"> Autores</label>
+        <label><input type="checkbox" data-hide="dates"> Fechas</label>
+        <label><input type="checkbox" data-hide="obs"> Observaciones</label>
+        <label><input type="checkbox" data-hide="tags"> Etiquetas</label>
+        <label><input type="checkbox" data-hide="resolved"> Comentarios resueltos</label>
+        <label><input type="checkbox" data-hide="replies"> Respuestas / hilos</label>
+      </div>
+    </div>
+    <div class="share-section">
+      <label class="section-label">URL compartible (solo lectura)</label>
+      <div class="share-url-row">
+        <input type="text" id="share-url" readonly>
+        <button class="btn small" id="btn-share-copy">Copiar</button>
+        <button class="btn small" id="btn-share-open">Abrir</button>
+      </div>
+      <p class="hint">Tus contrapartes solo verán lo que selecciones. Los controles de edición quedan ocultos.</p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-close>Cerrar</button>
+      <button class="btn primary" id="btn-share-pdf">Generar PDF</button>
     </div>
   </div>
 </div>

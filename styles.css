@@ -87,6 +87,63 @@ body { display: flex; flex-direction: column; height: 100vh; }
 
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #1e293b; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; z-index: 200; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
 
+/* ---------- Share modal ---------- */
+.share-section { padding: 10px 18px; }
+.section-label { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .3px; color: #475569; margin-bottom: 6px; }
+.share-docs { list-style: none; padding: 0; margin: 0; max-height: 160px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; }
+.share-docs li { padding: 4px 10px; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
+.share-docs li:last-child { border-bottom: 0; }
+.share-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 13px; }
+.share-opts label { display: flex; align-items: center; gap: 6px; }
+.share-url-row { display: flex; gap: 6px; }
+.share-url-row input { flex: 1; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px; font-family: monospace; }
+
+/* ---------- View mode (read-only for counterparts) ---------- */
+body.view-mode #btn-tags,
+body.view-mode #btn-export,
+body.view-mode #btn-backup,
+body.view-mode #btn-share,
+body.view-mode #btn-config,
+body.view-mode #btn-reload,
+body.view-mode label.btn.primary,
+body.view-mode #doc-toggles,
+body.view-mode .doc-header input[type=color],
+body.view-mode .doc-header button,
+body.view-mode .expand-btns,
+body.view-mode .comment-badges .btn,
+body.view-mode .obs-del { display: none !important; }
+body.view-mode .obs-input { border: none; background: transparent; resize: none; pointer-events: none; min-height: 0; padding: 2px 0; }
+body.view-mode .obs-input:placeholder-shown { display: none; }
+
+/* Selective hiding via ?hide=... */
+body.hide-authors .comment-author { display: none; }
+body.hide-dates .comment-date { display: none; }
+body.hide-obs .col-obs { display: none; }
+body.hide-tags .tag-chip,
+body.hide-tags .comment-badges { display: none; }
+body.hide-resolved .resolved-badge { display: none; }
+body.hide-replies .comment-reply { display: none; }
+
+/* ---------- Print / PDF ---------- */
+@media print {
+  .topbar, .filters, .modal, .loader-overlay, .toast,
+  .doc-header input[type=color], .doc-header button,
+  .expand-btns, .comment-badges .btn, .obs-del { display: none !important; }
+
+  body { background: #fff !important; height: auto !important; }
+  main.docs-container { display: block !important; padding: 0 !important; overflow: visible !important; gap: 0 !important; }
+  .doc-card { width: 100% !important; max-width: 100% !important; min-width: 0 !important; flex: 0 0 auto !important; box-shadow: none !important; border: 1px solid #888; margin-bottom: 12pt; page-break-after: always; page-break-inside: auto; }
+  .doc-card:last-child { page-break-after: auto; }
+  .doc-body { overflow: visible !important; max-height: none !important; }
+  .doc-table { font-size: 10pt; }
+  .doc-table th { position: static !important; }
+  tr, .comment-root, .comment-reply { page-break-inside: avoid; }
+  .obs-input { border: none !important; background: transparent !important; resize: none !important; min-height: 0 !important; padding: 0 !important; font-size: 10pt; pointer-events: none; }
+  .obs-input:placeholder-shown { display: none !important; }
+  .page-badge { border: 1px solid #888; }
+  @page { margin: 12mm; }
+}
+
 .loader-overlay { position: fixed; inset: 0; background: rgba(241,245,249,.78); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; z-index: 300; }
 .loader-overlay[hidden] { display: none; }
 .loader-box { background: #fff; padding: 24px 32px; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,.15); display: flex; flex-direction: column; align-items: center; gap: 12px; }

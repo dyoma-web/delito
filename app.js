@@ -2,6 +2,17 @@
 const DEFAULT_COLORS = ['#FFE4B5', '#B5E4FF', '#D4FFB5', '#FFB5D4', '#E4B5FF', '#FFFFB5', '#B5FFD4'];
 let nextDefaultColor = 0;
 
+// ---------- URL params: view mode for counterparts ----------
+const _params = new URLSearchParams(location.search);
+const VIEW_MODE = _params.get('view') === '1';
+const VIEW_HIDE = new Set((_params.get('hide') || '').split(',').filter(Boolean));
+const VIEW_HIDE_DOCS = new Set((_params.get('hidedocs') || '').split(',').filter(Boolean));
+
+if (VIEW_MODE) {
+  document.body.classList.add('view-mode');
+  for (const h of VIEW_HIDE) document.body.classList.add('hide-' + h);
+}
+
 const state = {
   documents: [], paragraphs: [], comments: [], tags: [], comment_tags: [],
   filters: { text: '', author: '', tagId: '', showResolved: false },
@@ -35,6 +46,11 @@ function wireEvents() {
   document.getElementById('btn-config').addEventListener('click', openConfigModal);
   document.getElementById('btn-export').addEventListener('click', exportCSV);
   document.getElementById('btn-backup').addEventListener('click', exportBackup);
+  document.getElementById('btn-share').addEventListener('click', openShareModal);
+  document.getElementById('btn-pdf-view').addEventListener('click', () => window.print());
+  document.getElementById('btn-share-copy').addEventListener('click', copyShareURL);
+  document.getElementById('btn-share-open').addEventListener('click', openShareURL);
+  document.getElementById('btn-share-pdf').addEventListener('click', generateSharePDF);
   document.getElementById('btn-reload').addEventListener('click', reloadAll);
 
   document.getElementById('filter-text').addEventListener('input', e => { state.filters.text = e.target.value.toLowerCase(); renderDocs(); });
@@ -197,7 +213,10 @@ async function toggleDocVisibility(d) {
 function renderDocs() {
   const container = document.getElementById('docs-container');
   container.innerHTML = '';
-  const visibleDocs = state.documents.filter(isVisible);
+  let visibleDocs = state.documents.filter(isVisible);
+  if (VIEW_MODE && VIEW_HIDE_DOCS.size) {
+    visibleDocs = visibleDocs.filter(d => !VIEW_HIDE_DOCS.has(d.doc_id));
+  }
   if (!visibleDocs.length) {
     container.innerHTML = `<div class="empty-state" id="empty-state">
       <p>No hay documentos cargados o todos están ocultos.</p>
@@ -211,6 +230,7 @@ function renderDocs() {
 function renderDoc(d) {
   const card = document.createElement('div');
   card.className = 'doc-card';
+  card.dataset.docId = d.doc_id;
   card.style.background = d.color;
 
   const header = document.createElement('div');
@@ -394,7 +414,7 @@ function renderCommentNode(c, replies, isMulti, n, total) {
   meta.className = 'comment-meta';
   const left = document.createElement('span');
   left.innerHTML = `<span class="comment-author">${escapeHtml(c.author || '')}</span>` +
-                   (c.created_at ? ` · ${formatDate(c.created_at)}` : '') +
+                   (c.created_at ? `<span class="comment-date"> · ${formatDate(c.created_at)}</span>` : '') +
                    (isMulti ? `<span class="multi-comment-note">Comentario ${n}/${total} del mismo párrafo</span>` : '');
   const right = document.createElement('span');
   if (Number(c.resolved) === 1) right.innerHTML = `<span class="resolved-badge">Resuelto</span>`;
@@ -412,7 +432,7 @@ function renderCommentNode(c, replies, isMulti, n, total) {
     const rmeta = document.createElement('div');
     rmeta.className = 'comment-meta';
     rmeta.innerHTML = `<span class="comment-author">↳ ${escapeHtml(r.author || '')}</span>` +
-                      (r.created_at ? ` · ${formatDate(r.created_at)}` : '');
+                      (r.created_at ? `<span class="comment-date"> · ${formatDate(r.created_at)}</span>` : '');
     const rtxt = document.createElement('div');
     rtxt.className = 'comment-text';
     rtxt.textContent = r.comment_text || '';
@@ -652,6 +672,85 @@ async function onConfigSave() {
   document.getElementById('config-modal').hidden = true;
   toast('Config guardada. Recargando…');
   await reloadAll();
+}
+
+// ---------- Share / PDF ----------
+function openShareModal() {
+  const docsUl = document.getElementById('share-docs');
+  docsUl.innerHTML = '';
+  for (const d of state.documents) {
+    const li = document.createElement('li');
+    const safeId = escapeAttr(d.doc_id);
+    li.innerHTML = `<label><input type="checkbox" data-doc-id="${safeId}" checked> ${escapeHtml(d.filename)}</label>`;
+    docsUl.appendChild(li);
+  }
+  document.querySelectorAll('#share-modal [data-hide]').forEach(cb => cb.checked = false);
+  document.querySelectorAll('#share-modal input[type=checkbox]').forEach(cb => {
+    cb.removeEventListener('change', updateShareURL);
+    cb.addEventListener('change', updateShareURL);
+  });
+  updateShareURL();
+  document.getElementById('share-modal').hidden = false;
+}
+
+function readShareSettings() {
+  const hides = [...document.querySelectorAll('#share-modal [data-hide]:checked')].map(cb => cb.dataset.hide);
+  const included = [...document.querySelectorAll('#share-docs input[type=checkbox]:checked')].map(cb => cb.dataset.docId);
+  const excluded = state.documents.filter(d => !included.includes(d.doc_id)).map(d => d.doc_id);
+  return { hides, excluded };
+}
+
+function updateShareURL() {
+  const { hides, excluded } = readShareSettings();
+  const params = new URLSearchParams();
+  params.set('view', '1');
+  if (hides.length) params.set('hide', hides.join(','));
+  if (excluded.length) params.set('hidedocs', excluded.join(','));
+  document.getElementById('share-url').value =
+    `${location.origin}${location.pathname}?${params.toString()}`;
+}
+
+async function copyShareURL() {
+  const url = document.getElementById('share-url').value;
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('URL copiada al portapapeles.');
+  } catch {
+    document.getElementById('share-url').select();
+    try { document.execCommand('copy'); toast('URL copiada.'); }
+    catch { toast('No se pudo copiar. Selecciona manualmente.', true); }
+  }
+}
+
+function openShareURL() {
+  window.open(document.getElementById('share-url').value, '_blank');
+}
+
+function generateSharePDF() {
+  const { hides, excluded } = readShareSettings();
+
+  const oldClasses = [...document.body.classList];
+  document.body.classList.add('view-mode');
+  for (const h of hides) document.body.classList.add('hide-' + h);
+
+  const hiddenCards = [];
+  document.querySelectorAll('.doc-card').forEach(card => {
+    if (excluded.includes(card.dataset.docId)) {
+      hiddenCards.push([card, card.style.display]);
+      card.style.display = 'none';
+    }
+  });
+
+  document.getElementById('share-modal').hidden = true;
+
+  const restore = () => {
+    document.body.className = oldClasses.join(' ');
+    hiddenCards.forEach(([c, prev]) => { c.style.display = prev; });
+    window.removeEventListener('afterprint', restore);
+  };
+  window.addEventListener('afterprint', restore);
+
+  setTimeout(() => window.print(), 100);
 }
 
 // ---------- Export CSV ----------

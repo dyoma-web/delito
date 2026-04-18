@@ -116,13 +116,22 @@ function appendRows(name, rows) {
 
 function deleteRowsWhere(name, predicate) {
   const sheet = sh(name);
-  const range = sheet.getDataRange().getValues();
-  const headers = range[0];
-  for (let i = range.length - 1; i >= 1; i--) {
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return;
+  const headers = data[0];
+  const kept = [];
+  for (let i = 1; i < data.length; i++) {
     const obj = {};
-    headers.forEach((h, j) => obj[h] = range[i][j]);
-    if (predicate(obj)) sheet.deleteRow(i + 1);
+    headers.forEach((h, j) => obj[h] = data[i][j]);
+    if (!predicate(obj)) kept.push(data[i]);
   }
+  const oldCount = data.length - 1;
+  if (kept.length === oldCount) return;
+  if (kept.length > 0) {
+    sheet.getRange(2, 1, kept.length, headers.length).setValues(kept);
+  }
+  const excess = oldCount - kept.length;
+  if (excess > 0) sheet.deleteRows(2 + kept.length, excess);
 }
 
 function updateRowsWhere(name, predicate, patch) {

@@ -54,6 +54,7 @@ body { display: flex; flex-direction: column; height: 100vh; }
 .context-paragraph { opacity: 0.55; font-style: italic; font-size: 12px; margin: 3px 0; }
 
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.modal[hidden] { display: none; }
 .modal-content { background: #fff; border-radius: 10px; padding: 0; min-width: 400px; max-width: 560px; max-height: 85vh; overflow: auto; }
 .modal-content header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid #e2e8f0; }
 .modal-content h2 { margin: 0; font-size: 16px; }
